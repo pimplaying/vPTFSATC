@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+server/discord_config.py
+server/atc.db
+client/audio_config.json
+client/radio_config.json
