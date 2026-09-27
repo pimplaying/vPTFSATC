@@ -26,6 +26,7 @@ class NetworkWorker(QThread):
         super().__init__()
         self.username = username
         self._running = False
+        self._stop_event = threading.Event()
         self._station_lock = threading.Lock()
         self._station = None
         self._station_dirty = False
@@ -40,6 +41,7 @@ class NetworkWorker(QThread):
     def run(self):
         self._running = True
         last_flightplan_poll = 0.0
+        last_position_poll = 0.0
 
         while self._running:
             now = time.time()
@@ -51,6 +53,14 @@ class NetworkWorker(QThread):
                 else:
                     self.connection_error.emit(str(result))
                 last_flightplan_poll = now
+
+            if now - last_position_poll >= POSITION_POLL_SECONDS:
+                ok, result = api_client.list_positions()
+                if ok:
+                    self.positions_updated.emit(result)
+                else:
+                    self.connection_error.emit(str(result))
+                last_position_poll = now
 
             with self._station_lock:
                 station = dict(self._station) if self._station else None
@@ -72,16 +82,11 @@ class NetworkWorker(QThread):
                     api_client.release_controller(self.username)
                     self._station_published = False
 
+            self._stop_event.wait(POSITION_POLL_SECONDS)
+
         if self._station_published:
             api_client.release_controller(self.username)
 
-            ok, result = api_client.list_positions()
-            if ok:
-                self.positions_updated.emit(result)
-            else:
-                self.connection_error.emit(str(result))
-
-            time.sleep(POSITION_POLL_SECONDS)
-
     def stop(self):
         self._running = False
+        self._stop_event.set()

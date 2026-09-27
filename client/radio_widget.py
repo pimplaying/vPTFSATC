@@ -31,6 +31,27 @@ def _load_radio_config():
         return {}
 
 
+class PushToTalkMouseFilter(QObject):
+    def __init__(self, button, on_transmit, parent=None):
+        super().__init__(parent)
+        self.button = button
+        self.on_transmit = on_transmit
+        self._mouse_down = False
+
+    def eventFilter(self, watched, event):
+        if (event.type() == QEvent.Type.MouseButtonPress
+                and watched is self.button
+                and event.button() == Qt.MouseButton.LeftButton):
+            self._mouse_down = True
+            self.on_transmit(True)
+        elif (event.type() == QEvent.Type.MouseButtonRelease
+              and self._mouse_down
+              and event.button() == Qt.MouseButton.LeftButton):
+            self._mouse_down = False
+            self.on_transmit(False)
+        return False
+
+
 class RadioPanel(QWidget):
     station_changed = pyqtSignal(object)
     transmit_changed = pyqtSignal(bool)
@@ -40,6 +61,8 @@ class RadioPanel(QWidget):
         self.username = username
         self.station_active = False
         self.transmitting = False
+        self._button_transmitting = False
+        self._key_transmitting = False
         saved = _load_radio_config()
 
         layout = QVBoxLayout(self)
@@ -77,8 +100,10 @@ class RadioPanel(QWidget):
         self.ptt_button.setObjectName("connectButton")
         self.ptt_button.setToolTip("Hold to transmit on the selected frequency")
         self.ptt_button.setEnabled(False)
-        self.ptt_button.pressed.connect(lambda: self.set_transmitting(True))
-        self.ptt_button.released.connect(lambda: self.set_transmitting(False))
+        self._mouse_ptt_filter = PushToTalkMouseFilter(
+            self.ptt_button, self.set_button_transmitting, self
+        )
+        QApplication.instance().installEventFilter(self._mouse_ptt_filter)
         radio_row.addWidget(self.ptt_button)
 
         radio_row.addWidget(QLabel("PTT key"))
@@ -138,7 +163,8 @@ class RadioPanel(QWidget):
             return
 
         self.station_active = False
-        self.set_transmitting(False)
+        self.set_button_transmitting(False)
+        self.set_key_transmitting(False)
         self.station_button.setText("Take Position")
         self.island_combo.setEnabled(True)
         self.position_combo.setEnabled(True)
@@ -147,9 +173,20 @@ class RadioPanel(QWidget):
         self.status_label.setText("No ATC position selected")
         self.station_changed.emit(None)
 
-    def set_transmitting(self, active):
-        active = bool(active and self.station_active)
+    def set_button_transmitting(self, active):
+        self._button_transmitting = bool(active and self.station_active)
+        self._update_transmitting()
+
+    def set_key_transmitting(self, active):
+        self._key_transmitting = bool(active and self.station_active)
+        self._update_transmitting()
+
+    def _update_transmitting(self):
+        active = self.station_active and (
+            self._button_transmitting or self._key_transmitting
+        )
         if active == self.transmitting:
+            self.ptt_button.setDown(active)
             return
         self.transmitting = active
         self.ptt_button.setDown(active)
@@ -177,12 +214,12 @@ class PushToTalkKeyFilter(QObject):
         if event.type() not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
             return False
 
+        if event.isAutoRepeat():
+            return self._key_down and event.key() == self._pressed_key
         if (event.type() == QEvent.Type.KeyRelease and self._key_down
                 and event.key() == self._pressed_key):
             self.release_key()
             return True
-        if event.isAutoRepeat():
-            return self._key_down and event.key() == self._pressed_key
 
         focus = QApplication.focusWidget()
         if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit,
@@ -200,11 +237,13 @@ class PushToTalkKeyFilter(QObject):
 
         self._key_down = True
         self._pressed_key = event.key()
-        self.radio_panel.set_transmitting(event.type() == QEvent.Type.KeyPress)
+        self.radio_panel.set_key_transmitting(
+            event.type() == QEvent.Type.KeyPress
+        )
         return True
 
     def release_key(self, *_args):
         if self._key_down:
             self._key_down = False
             self._pressed_key = None
-            self.radio_panel.set_transmitting(False)
+            self.radio_panel.set_key_transmitting(False)

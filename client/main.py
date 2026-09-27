@@ -119,6 +119,8 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
         self.radio_worker = None
+        self._pilot_button_down = False
+        self._pilot_key_down = False
         self.radio_panel.station_changed.connect(self._on_station_changed)
         self.radio_panel.transmit_changed.connect(self._on_transmit_changed)
         self.ptt_key_filter = PushToTalkKeyFilter(self.radio_panel, self)
